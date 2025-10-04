@@ -52,9 +52,10 @@ def validate_content(content: str) -> bool:
     """Kiểm tra content có hợp lệ không"""
     if not content or content.strip() == "":
         return False
-    if len(content.strip()) < 10:
+    # Giảm yêu cầu độ dài tối thiểu từ 10 xuống 3 ký tự
+    if len(content.strip()) < 3:
         return False
-    if content.lower() in ["nan", "null", "none"]:
+    if content.lower() in ["nan", "null", "none", "undefined"]:
         return False
     return True
 
@@ -134,7 +135,31 @@ if uploaded_file:
             # Thống kê dữ liệu
             total_rows = len(df)
             valid_content = df["content"].apply(lambda x: validate_content(str(x))).sum()
-            st.info(f"📊 Tổng: {total_rows} dòng, {valid_content} dòng hợp lệ")
+            invalid_content = total_rows - valid_content
+            
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("📊 Tổng dòng", total_rows)
+            with col2:
+                st.metric("✅ Hợp lệ", valid_content)
+            with col3:
+                st.metric("❌ Không hợp lệ", invalid_content)
+            
+            # Hiển thị các dòng không hợp lệ để debug
+            if invalid_content > 0:
+                st.warning(f"⚠️ Có {invalid_content} dòng không hợp lệ:")
+                invalid_rows = []
+                for idx, row in df.iterrows():
+                    content = str(row["content"]).strip()
+                    if not validate_content(content):
+                        invalid_rows.append({
+                            "Dòng": idx + 1,
+                            "Content": content[:100] + "..." if len(content) > 100 else content,
+                            "Độ dài": len(content)
+                        })
+                
+                if invalid_rows:
+                    st.dataframe(pd.DataFrame(invalid_rows))
 
             if st.button("🚀 Bắt đầu đăng", type="primary"):
                 # Progress bar
@@ -154,14 +179,17 @@ if uploaded_file:
                     status_text.text(f"Đang xử lý dòng {idx + 1}/{total_rows}...")
                     
                     if not validate_content(content):
+                        # Debug info cho content không hợp lệ
+                        debug_info = f"Content: '{content[:50]}...' (Length: {len(content)})"
                         results.append({
                             "row": idx+1, 
                             "status": "❌ Content không hợp lệ", 
                             "url": None, 
                             "edit_code": None,
-                            "error": "Content quá ngắn hoặc trống"
+                            "error": f"Content quá ngắn hoặc trống - {debug_info}"
                         })
                         error_count += 1
+                        logger.warning(f"Dòng {idx + 1} content không hợp lệ: {debug_info}")
                         continue
 
                     logger.info(f"Đang xử lý dòng {idx + 1}")
