@@ -17,8 +17,8 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-st.title("🐷 Rentry Bulk Poster")
-st.write("Upload file Excel có cột **content**, app sẽ đăng từng bài lên [rentry.co](https://rentry.co).")
+st.title("🐷 Dpaste Bulk Poster")
+st.write("Upload file Excel có cột **content**, app sẽ đăng từng bài lên [dpaste.com](https://dpaste.com) (ưu tiên) và [rentry.co](https://rentry.co) (fallback).")
 
 # Sidebar với thông tin
 with st.sidebar:
@@ -36,11 +36,12 @@ with st.sidebar:
     st.write("- Kiểm tra kết quả trước khi tải file")
     
     st.header("🔧 Phương thức đăng")
-    st.write("1. **API Mode**: `rentry.co/api/new`")
-    st.write("2. **Session Mode**: Duy trì cookies")
-    st.write("3. **Form Mode**: 3 phương thức khác nhau")
-    st.write("4. **Selenium Mode**: Giả lập trình duyệt thật")
-    st.write("5. **Alternative**: dpaste.com, 0x0.st")
+    st.write("1. **Dpaste API**: `dpaste.com/api/v2/` (ưu tiên)")
+    st.write("2. **Rentry API**: `rentry.co/api/new`")
+    st.write("3. **Session Mode**: Duy trì cookies")
+    st.write("4. **Form Mode**: 3 phương thức khác nhau")
+    st.write("5. **Selenium Mode**: Giả lập trình duyệt thật")
+    st.write("6. **Alternative**: 0x0.st, pastebin.com")
     
     st.header("⚠️ Yêu cầu hệ thống")
     st.write("- **Chrome/Chromium** cho Selenium")
@@ -111,38 +112,44 @@ def post_rentry_with_session(content: str) -> Dict[str, Any]:
 
 def post_rentry(content: str, max_retries: int = 2) -> Dict[str, Any]:
     """
-    Đăng bài lên rentry bằng API, nếu fail thì fallback sang form submit
+    Đăng bài lên dpaste.com trước, nếu fail thì thử rentry
     """
     # Validate content
     if not validate_content(content):
         return {"error": "Content không hợp lệ hoặc quá ngắn"}
     
-    data = {"text": content.strip()}
     logger.info(f"Đang đăng bài với {len(content)} ký tự")
 
-    # --- API Mode với retry ---
+    # --- Thử dpaste trước (ưu tiên cao nhất) ---
+    dpaste_result = post_dpaste(content)
+    if "url" in dpaste_result:
+        return dpaste_result
+    
+    # --- Nếu dpaste fail, thử rentry API ---
+    data = {"text": content.strip()}
     for attempt in range(max_retries):
         try:
             r = requests.post("https://rentry.co/api/new", data=data, headers=HEADERS, timeout=30)
-            logger.info(f"API attempt {attempt + 1}: Status {r.status_code}")
+            logger.info(f"Rentry API attempt {attempt + 1}: Status {r.status_code}")
             
             if r.status_code == 200:
                 try:
                     result = r.json()
-                    logger.info("API thành công")
+                    logger.info("Rentry API thành công")
                     return result
                 except Exception as e:
-                    logger.warning(f"API trả về không phải JSON: {e}")
+                    logger.warning(f"Rentry API trả về không phải JSON: {e}")
                     if attempt == max_retries - 1:
-                        # Thử session mode trước khi fallback form
+                        # Thử session mode
                         session_result = post_rentry_with_session(content)
                         if "url" in session_result:
                             return session_result
-                        return {"error": "API trả về không phải JSON", "raw": r.text[:200]}
+                        # Thử alternative services
+                        return post_rentry_alternative(content)
             else:
-                logger.warning(f"API failed với status {r.status_code}")
+                logger.warning(f"Rentry API failed với status {r.status_code}")
                 if attempt == max_retries - 1:
-                    # Thử session mode trước khi fallback form
+                    # Thử session mode
                     session_result = post_rentry_with_session(content)
                     if "url" in session_result:
                         return session_result
@@ -158,9 +165,9 @@ def post_rentry(content: str, max_retries: int = 2) -> Dict[str, Any]:
                     return post_rentry_alternative(content)
                     
         except Exception as e:
-            logger.error(f"API Exception attempt {attempt + 1}: {e}")
+            logger.error(f"Rentry API Exception attempt {attempt + 1}: {e}")
             if attempt == max_retries - 1:
-                # Thử session mode trước khi fallback form
+                # Thử session mode
                 session_result = post_rentry_with_session(content)
                 if "url" in session_result:
                     return session_result
@@ -299,23 +306,32 @@ def post_rentry_selenium(content: str) -> Dict[str, Any]:
         logger.error(f"Selenium Exception: {e}")
         return {"error": f"Selenium Exception: {e}"}
 
+def post_dpaste(content: str) -> Dict[str, Any]:
+    """
+    Đăng bài lên dpaste.com - phương thức chính
+    """
+    logger.info("Đăng bài lên dpaste.com")
+    try:
+        data = {"content": content, "syntax": "text"}
+        r = requests.post("https://dpaste.com/api/v2/", data=data, timeout=30)
+        logger.info(f"Dpaste API: Status {r.status_code}")
+        
+        if r.status_code == 201:
+            result_url = r.text.strip()
+            logger.info(f"Dpaste thành công: {result_url}")
+            return {"url": result_url, "edit_code": "Dpaste API", "method": "dpaste"}
+        else:
+            return {"error": f"Dpaste API failed: {r.status_code}", "raw": r.text[:200]}
+            
+    except Exception as e:
+        logger.error(f"Dpaste Exception: {e}")
+        return {"error": f"Dpaste Exception: {e}"}
+
 def post_rentry_alternative(content: str) -> Dict[str, Any]:
     """
     Phương thức thay thế: Thử các service paste khác
     """
     logger.info("Thử phương thức thay thế")
-    
-    # Thử dpaste.com
-    try:
-        import requests
-        data = {"content": content, "syntax": "text"}
-        r = requests.post("https://dpaste.com/api/v2/", data=data, timeout=30)
-        if r.status_code == 201:
-            result_url = r.text.strip()
-            logger.info(f"Dpaste thành công: {result_url}")
-            return {"url": result_url, "edit_code": "Dpaste mode", "method": "dpaste"}
-    except Exception as e:
-        logger.warning(f"Dpaste failed: {e}")
     
     # Thử 0x0.st
     try:
@@ -327,6 +343,17 @@ def post_rentry_alternative(content: str) -> Dict[str, Any]:
             return {"url": result_url, "edit_code": "0x0.st mode", "method": "0x0.st"}
     except Exception as e:
         logger.warning(f"0x0.st failed: {e}")
+    
+    # Thử pastebin.com
+    try:
+        data = {"api_dev_key": "anonymous", "api_option": "paste", "api_paste_code": content}
+        r = requests.post("https://pastebin.com/api/api_post.php", data=data, timeout=30)
+        if r.status_code == 200 and "http" in r.text:
+            result_url = r.text.strip()
+            logger.info(f"Pastebin thành công: {result_url}")
+            return {"url": result_url, "edit_code": "Pastebin mode", "method": "pastebin"}
+    except Exception as e:
+        logger.warning(f"Pastebin failed: {e}")
     
     return {"error": "Tất cả phương thức thay thế đều fail"}
 
