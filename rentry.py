@@ -31,8 +31,15 @@ with st.sidebar:
     
     st.header("⚠️ Lưu ý")
     st.write("- Mỗi bài đăng cách nhau 3 giây")
-    st.write("- Nếu API fail sẽ tự động chuyển sang form")
+    st.write("- **API** → **Session** → **Form** (3 phương thức)")
+    st.write("- Tự động retry khi gặp lỗi 403/500")
     st.write("- Kiểm tra kết quả trước khi tải file")
+    
+    st.header("🔧 Phương thức đăng")
+    st.write("1. **API Mode**: `rentry.co/api/new`")
+    st.write("2. **Session Mode**: Duy trì cookies")
+    st.write("3. **Form Mode**: 3 phương thức khác nhau")
+    st.write("4. **Alternative**: Các service khác (nếu có)")
 
 uploaded_file = st.file_uploader("📂 Chọn file Excel (.xlsx)", type=["xlsx"])
 delay = st.number_input("⏱ Giãn cách giữa các bài (giây)", min_value=0.0, value=3.0, step=0.5)
@@ -59,6 +66,43 @@ def validate_content(content: str) -> bool:
         return False
     return True
 
+def post_rentry_with_session(content: str) -> Dict[str, Any]:
+    """
+    Thử đăng bài với session để duy trì cookies
+    """
+    logger.info("Thử với session mode")
+    try:
+        session = requests.Session()
+        session.headers.update(HEADERS)
+        
+        # Lấy trang chủ trước để có cookies
+        session.get("https://rentry.co", timeout=30)
+        
+        # Thử API với session
+        r = session.post("https://rentry.co/api/new", data={"text": content}, timeout=30)
+        logger.info(f"Session API: Status {r.status_code}")
+        
+        if r.status_code == 200:
+            try:
+                result = r.json()
+                logger.info("Session API thành công")
+                return result
+            except Exception:
+                pass
+        
+        # Thử form với session
+        r = session.post("https://rentry.co", data={"text": content}, timeout=30)
+        logger.info(f"Session Form: Status {r.status_code}, URL: {r.url}")
+        
+        if r.status_code == 200 and "rentry.co/" in r.url:
+            return {"url": r.url, "edit_code": "Session mode", "method": "session"}
+        
+        return {"error": f"Session mode fail: {r.status_code}"}
+        
+    except Exception as e:
+        logger.error(f"Session Exception: {e}")
+        return {"error": f"Session Exception: {e}"}
+
 def post_rentry(content: str, max_retries: int = 2) -> Dict[str, Any]:
     """
     Đăng bài lên rentry bằng API, nếu fail thì fallback sang form submit
@@ -84,16 +128,28 @@ def post_rentry(content: str, max_retries: int = 2) -> Dict[str, Any]:
                 except Exception as e:
                     logger.warning(f"API trả về không phải JSON: {e}")
                     if attempt == max_retries - 1:
+                        # Thử session mode trước khi fallback form
+                        session_result = post_rentry_with_session(content)
+                        if "url" in session_result:
+                            return session_result
                         return {"error": "API trả về không phải JSON", "raw": r.text[:200]}
             else:
                 logger.warning(f"API failed với status {r.status_code}")
                 if attempt == max_retries - 1:
-                    # Thử fallback
+                    # Thử session mode trước khi fallback form
+                    session_result = post_rentry_with_session(content)
+                    if "url" in session_result:
+                        return session_result
+                    # Thử fallback form
                     return post_rentry_form(content)
                     
         except Exception as e:
             logger.error(f"API Exception attempt {attempt + 1}: {e}")
             if attempt == max_retries - 1:
+                # Thử session mode trước khi fallback form
+                session_result = post_rentry_with_session(content)
+                if "url" in session_result:
+                    return session_result
                 return {"error": f"API Exception: {e}"}
         
         # Delay trước khi retry
@@ -104,21 +160,75 @@ def post_rentry(content: str, max_retries: int = 2) -> Dict[str, Any]:
 
 def post_rentry_form(content: str) -> Dict[str, Any]:
     """
-    Fallback: giả lập submit form web
+    Fallback: giả lập submit form web với nhiều phương thức
     """
     logger.info("Chuyển sang form mode")
-    try:
-        r = requests.post("https://rentry.co", data={"text": content}, headers=HEADERS, timeout=30)
-        logger.info(f"Form mode: Status {r.status_code}, URL: {r.url}")
-        
-        if r.status_code == 200 and "rentry.co/" in r.url:
-            # Nếu thành công, link sẽ ở r.url
-            return {"url": r.url, "edit_code": "Chỉ có khi dùng API", "method": "form"}
-        else:
-            return {"error": f"Form mode fail: {r.status_code}", "raw": r.text[:200]}
-    except Exception as e:
-        logger.error(f"Form Exception: {e}")
-        return {"error": f"Form Exception: {e}"}
+    
+    # Thử nhiều phương thức khác nhau
+    methods = [
+        {"url": "https://rentry.co", "data": {"text": content}},
+        {"url": "https://rentry.co/", "data": {"text": content}},
+        {"url": "https://rentry.co/new", "data": {"text": content}},
+    ]
+    
+    for i, method in enumerate(methods):
+        try:
+            logger.info(f"Form method {i+1}: {method['url']}")
+            
+            # Headers khác nhau cho từng phương thức
+            headers = HEADERS.copy()
+            if i == 1:
+                headers["Content-Type"] = "application/x-www-form-urlencoded"
+            elif i == 2:
+                headers["X-Requested-With"] = "XMLHttpRequest"
+            
+            r = requests.post(method["url"], data=method["data"], headers=headers, timeout=30)
+            logger.info(f"Form method {i+1}: Status {r.status_code}, URL: {r.url}")
+            
+            if r.status_code == 200:
+                # Kiểm tra response có chứa link rentry không
+                if "rentry.co/" in r.url or "rentry.co/" in r.text:
+                    # Tìm link trong response
+                    import re
+                    link_match = re.search(r'https://rentry\.co/[a-zA-Z0-9]+', r.text)
+                    if link_match:
+                        return {
+                            "url": link_match.group(), 
+                            "edit_code": "Chỉ có khi dùng API", 
+                            "method": f"form_{i+1}"
+                        }
+                    elif "rentry.co/" in r.url:
+                        return {
+                            "url": r.url, 
+                            "edit_code": "Chỉ có khi dùng API", 
+                            "method": f"form_{i+1}"
+                        }
+            
+            # Nếu không thành công, thử phương thức tiếp theo
+            if i < len(methods) - 1:
+                time.sleep(1)  # Delay giữa các attempts
+                
+        except Exception as e:
+            logger.error(f"Form method {i+1} Exception: {e}")
+            if i == len(methods) - 1:  # Lần cuối cùng
+                return {"error": f"Tất cả form methods đều fail: {e}"}
+    
+    return {"error": f"Form mode fail: 403 - Tất cả phương thức đều bị từ chối"}
+
+def post_rentry_alternative(content: str) -> Dict[str, Any]:
+    """
+    Phương thức thay thế: Thử các API khác hoặc service tương tự
+    """
+    logger.info("Thử phương thức thay thế")
+    
+    # Có thể thêm các service paste khác như:
+    # - pastebin.com
+    # - dpaste.com  
+    # - hastebin.com
+    # - 0x0.st
+    
+    # Tạm thời return error, có thể implement sau
+    return {"error": "Không có phương thức thay thế khả dụng"}
 
 if uploaded_file:
     try:
