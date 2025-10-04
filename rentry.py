@@ -4,6 +4,7 @@ import requests
 import io
 import time
 import logging
+import re
 from typing import Dict, Any, Optional
 
 # Cấu hình logging
@@ -26,8 +27,15 @@ with st.sidebar:
     st.write("**Cách sử dụng:**")
     st.write("1. Chuẩn bị file Excel với cột 'content'")
     st.write("2. Upload file và xem preview")
-    st.write("3. Nhấn 'Bắt đầu đăng'")
-    st.write("4. Tải file kết quả")
+    st.write("3. Chọn tùy chọn chuyển đổi Markdown")
+    st.write("4. Nhấn 'Bắt đầu đăng'")
+    st.write("5. Tải file kết quả")
+    
+    st.header("📝 Hỗ trợ Markdown")
+    st.write("- **[text](url)** → **text (url)**")
+    st.write("- **https://example.com** → **(https://example.com)**")
+    st.write("- **Bold**, *Italic*, `Code` → Plain text")
+    st.write("- Headers, Lists → Clean text")
     
     st.header("⚠️ Lưu ý")
     st.write("- Mỗi bài đăng cách nhau 3 giây")
@@ -51,6 +59,13 @@ with st.sidebar:
 uploaded_file = st.file_uploader("📂 Chọn file Excel (.xlsx)", type=["xlsx"])
 delay = st.number_input("⏱ Giãn cách giữa các bài (giây)", min_value=0.0, value=3.0, step=0.5)
 
+# Tùy chọn chuyển đổi Markdown
+col1, col2 = st.columns(2)
+with col1:
+    convert_markdown = st.checkbox("🔄 Chuyển Markdown thành văn bản thuần", value=True, help="Chuyển đổi [text](url) thành text (url)")
+with col2:
+    show_preview = st.checkbox("👁️ Xem trước chuyển đổi", value=False, help="Hiển thị nội dung sau khi chuyển đổi")
+
 # Headers giả lập trình duyệt
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -61,6 +76,36 @@ HEADERS = {
     "Referer": "https://rentry.co/",
     "Connection": "keep-alive"
 }
+
+def convert_markdown_to_plain_text(markdown_text: str) -> str:
+    """
+    Chuyển đổi Markdown thành văn bản thuần với hyperlink
+    """
+    if not markdown_text:
+        return markdown_text
+    
+    text = markdown_text
+    
+    # Chuyển đổi các link markdown [text](url) thành text (url)
+    link_pattern = r'\[([^\]]+)\]\(([^)]+)\)'
+    text = re.sub(link_pattern, r'\1 (\2)', text)
+    
+    # Chuyển đổi các link trực tiếp thành text (url)
+    url_pattern = r'(https?://[^\s]+)'
+    text = re.sub(url_pattern, r'(\1)', text)
+    
+    # Loại bỏ các markdown formatting
+    text = re.sub(r'\*\*(.*?)\*\*', r'\1', text)  # Bold **text**
+    text = re.sub(r'\*(.*?)\*', r'\1', text)      # Italic *text*
+    text = re.sub(r'`(.*?)`', r'\1', text)        # Code `text`
+    text = re.sub(r'#{1,6}\s*', '', text)         # Headers # ## ###
+    text = re.sub(r'^\s*[-*+]\s*', '', text, flags=re.MULTILINE)  # List items
+    text = re.sub(r'^\s*\d+\.\s*', '', text, flags=re.MULTILINE)  # Numbered lists
+    
+    # Loại bỏ các dòng trống thừa
+    text = re.sub(r'\n\s*\n\s*\n', '\n\n', text)
+    
+    return text.strip()
 
 def validate_content(content: str) -> bool:
     """Kiểm tra content có hợp lệ không"""
@@ -397,6 +442,23 @@ if uploaded_file:
                 
                 if invalid_rows:
                     st.dataframe(pd.DataFrame(invalid_rows))
+            
+            # Hiển thị preview chuyển đổi Markdown nếu được chọn
+            if show_preview and convert_markdown:
+                st.subheader("👁️ Xem trước chuyển đổi Markdown")
+                preview_rows = []
+                for idx, row in df.head(3).iterrows():  # Chỉ hiển thị 3 dòng đầu
+                    original = str(row["content"]).strip()
+                    converted = convert_markdown_to_plain_text(original)
+                    preview_rows.append({
+                        "Dòng": idx + 1,
+                        "Markdown gốc": original[:100] + "..." if len(original) > 100 else original,
+                        "Văn bản thuần": converted[:100] + "..." if len(converted) > 100 else converted
+                    })
+                
+                if preview_rows:
+                    st.dataframe(pd.DataFrame(preview_rows))
+                    st.info("💡 Chỉ hiển thị 3 dòng đầu tiên để preview")
 
             if st.button("🚀 Bắt đầu đăng", type="primary"):
                 # Progress bar
@@ -409,6 +471,10 @@ if uploaded_file:
 
                 for idx, row in df.iterrows():
                     content = str(row["content"]).strip()
+                    
+                    # Chuyển đổi Markdown nếu được chọn
+                    if convert_markdown:
+                        content = convert_markdown_to_plain_text(content)
                     
                     # Update progress
                     progress = (idx + 1) / total_rows
