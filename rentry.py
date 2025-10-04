@@ -3,7 +3,7 @@ import pandas as pd
 import requests
 import io
 
-st.set_page_config(page_title="Rentry 🐷 ", page_icon="📝", layout="centered")
+st.set_page_config(page_title="Rentry 🐷 ", page_icon="🐽", layout="centered")
 
 st.title("📝 Rentry 🐖💨 ")
 st.write("heo con xin chào 🐷🎀")
