@@ -39,7 +39,13 @@ with st.sidebar:
     st.write("1. **API Mode**: `rentry.co/api/new`")
     st.write("2. **Session Mode**: Duy trì cookies")
     st.write("3. **Form Mode**: 3 phương thức khác nhau")
-    st.write("4. **Alternative**: Các service khác (nếu có)")
+    st.write("4. **Selenium Mode**: Giả lập trình duyệt thật")
+    st.write("5. **Alternative**: dpaste.com, 0x0.st")
+    
+    st.header("⚠️ Yêu cầu hệ thống")
+    st.write("- **Chrome/Chromium** cho Selenium")
+    st.write("- **ChromeDriver** tự động tải")
+    st.write("- **Internet** ổn định")
 
 uploaded_file = st.file_uploader("📂 Chọn file Excel (.xlsx)", type=["xlsx"])
 delay = st.number_input("⏱ Giãn cách giữa các bài (giây)", min_value=0.0, value=3.0, step=0.5)
@@ -140,8 +146,16 @@ def post_rentry(content: str, max_retries: int = 2) -> Dict[str, Any]:
                     session_result = post_rentry_with_session(content)
                     if "url" in session_result:
                         return session_result
-                    # Thử fallback form
-                    return post_rentry_form(content)
+                    # Thử form mode
+                    form_result = post_rentry_form(content)
+                    if "url" in form_result:
+                        return form_result
+                    # Thử selenium mode
+                    selenium_result = post_rentry_selenium(content)
+                    if "url" in selenium_result:
+                        return selenium_result
+                    # Thử alternative services
+                    return post_rentry_alternative(content)
                     
         except Exception as e:
             logger.error(f"API Exception attempt {attempt + 1}: {e}")
@@ -150,7 +164,16 @@ def post_rentry(content: str, max_retries: int = 2) -> Dict[str, Any]:
                 session_result = post_rentry_with_session(content)
                 if "url" in session_result:
                     return session_result
-                return {"error": f"API Exception: {e}"}
+                # Thử form mode
+                form_result = post_rentry_form(content)
+                if "url" in form_result:
+                    return form_result
+                # Thử selenium mode
+                selenium_result = post_rentry_selenium(content)
+                if "url" in selenium_result:
+                    return selenium_result
+                # Thử alternative services
+                return post_rentry_alternative(content)
         
         # Delay trước khi retry
         if attempt < max_retries - 1:
@@ -215,20 +238,97 @@ def post_rentry_form(content: str) -> Dict[str, Any]:
     
     return {"error": f"Form mode fail: 403 - Tất cả phương thức đều bị từ chối"}
 
+def post_rentry_selenium(content: str) -> Dict[str, Any]:
+    """
+    Phương thức Selenium: Giả lập trình duyệt thật
+    """
+    logger.info("Thử với Selenium mode")
+    try:
+        from selenium import webdriver
+        from selenium.webdriver.common.by import By
+        from selenium.webdriver.support.ui import WebDriverWait
+        from selenium.webdriver.support import expected_conditions as EC
+        from selenium.webdriver.chrome.options import Options
+        from selenium.common.exceptions import TimeoutException, WebDriverException
+        
+        # Cấu hình Chrome headless
+        chrome_options = Options()
+        chrome_options.add_argument("--headless")
+        chrome_options.add_argument("--no-sandbox")
+        chrome_options.add_argument("--disable-dev-shm-usage")
+        chrome_options.add_argument("--disable-gpu")
+        chrome_options.add_argument("--window-size=1920,1080")
+        chrome_options.add_argument("--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36")
+        
+        driver = None
+        try:
+            driver = webdriver.Chrome(options=chrome_options)
+            driver.get("https://rentry.co")
+            
+            # Tìm textarea và nhập content
+            wait = WebDriverWait(driver, 10)
+            textarea = wait.until(EC.presence_of_element_located((By.NAME, "text")))
+            textarea.clear()
+            textarea.send_keys(content)
+            
+            # Tìm và click submit button
+            submit_button = driver.find_element(By.CSS_SELECTOR, "button[type='submit']")
+            submit_button.click()
+            
+            # Chờ redirect và lấy URL
+            wait.until(lambda driver: "rentry.co/" in driver.current_url)
+            result_url = driver.current_url
+            
+            logger.info(f"Selenium thành công: {result_url}")
+            return {"url": result_url, "edit_code": "Selenium mode", "method": "selenium"}
+            
+        except TimeoutException:
+            logger.error("Selenium timeout - không tìm thấy element")
+            return {"error": "Selenium timeout"}
+        except WebDriverException as e:
+            logger.error(f"Selenium WebDriver error: {e}")
+            return {"error": f"Selenium WebDriver error: {e}"}
+        finally:
+            if driver:
+                driver.quit()
+                
+    except ImportError:
+        logger.warning("Selenium không được cài đặt")
+        return {"error": "Selenium không khả dụng - cần cài đặt selenium"}
+    except Exception as e:
+        logger.error(f"Selenium Exception: {e}")
+        return {"error": f"Selenium Exception: {e}"}
+
 def post_rentry_alternative(content: str) -> Dict[str, Any]:
     """
-    Phương thức thay thế: Thử các API khác hoặc service tương tự
+    Phương thức thay thế: Thử các service paste khác
     """
     logger.info("Thử phương thức thay thế")
     
-    # Có thể thêm các service paste khác như:
-    # - pastebin.com
-    # - dpaste.com  
-    # - hastebin.com
-    # - 0x0.st
+    # Thử dpaste.com
+    try:
+        import requests
+        data = {"content": content, "syntax": "text"}
+        r = requests.post("https://dpaste.com/api/v2/", data=data, timeout=30)
+        if r.status_code == 201:
+            result_url = r.text.strip()
+            logger.info(f"Dpaste thành công: {result_url}")
+            return {"url": result_url, "edit_code": "Dpaste mode", "method": "dpaste"}
+    except Exception as e:
+        logger.warning(f"Dpaste failed: {e}")
     
-    # Tạm thời return error, có thể implement sau
-    return {"error": "Không có phương thức thay thế khả dụng"}
+    # Thử 0x0.st
+    try:
+        files = {"file": content.encode()}
+        r = requests.post("https://0x0.st", files=files, timeout=30)
+        if r.status_code == 200:
+            result_url = r.text.strip()
+            logger.info(f"0x0.st thành công: {result_url}")
+            return {"url": result_url, "edit_code": "0x0.st mode", "method": "0x0.st"}
+    except Exception as e:
+        logger.warning(f"0x0.st failed: {e}")
+    
+    return {"error": "Tất cả phương thức thay thế đều fail"}
 
 if uploaded_file:
     try:
