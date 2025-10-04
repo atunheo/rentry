@@ -3,10 +3,10 @@ import pandas as pd
 import requests
 import io
 
-st.set_page_config(page_title="Rentry", page_icon="📝", layout="centered")
+st.set_page_config(page_title="Rentry 🐷 ", page_icon="📝", layout="centered")
 
-st.title("📝 Rentry")
-st.write("heo con xin chào")
+st.title("📝 Rentry 🐖💨 ")
+st.write("heo con xin chào 🐷🎀")
 
 uploaded_file = st.file_uploader("📂 Chọn file Excel (.xlsx)", type=["xlsx"])
 
