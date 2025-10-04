@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import requests
 import io
+import time
 
 st.set_page_config(page_title="Rentry 🐷 ", page_icon="🐽", layout="centered")
 
@@ -9,6 +10,7 @@ st.title("📝 Rentry 🐖💨 ")
 st.write("heo con xin chào 🐷🎀")
 
 uploaded_file = st.file_uploader("📂 Chọn file Excel (.xlsx)", type=["xlsx"])
+delay = st.number_input("⏱ Thời gian giãn cách (giây) giữa các bài đăng", min_value=0.0, value=2.0, step=0.5)
 
 if uploaded_file:
     df = pd.read_excel(uploaded_file)
@@ -31,7 +33,16 @@ if uploaded_file:
 
                 data = {"text": content}
                 try:
-                    res = requests.post("https://rentry.co/api/new", data=data).json()
+                    response = requests.post("https://rentry.co/api/new", data=data, timeout=15)
+
+                    if response.status_code == 200:
+                        try:
+                            res = response.json()
+                        except Exception:
+                            res = {"error": "Không parse được JSON", "raw": response.text[:200]}
+                    else:
+                        res = {"error": f"HTTP {response.status_code}", "raw": response.text[:200]}
+
                     if "url" in res:
                         results.append({
                             "row": idx+1,
@@ -40,9 +51,19 @@ if uploaded_file:
                             "edit_code": res["edit_code"]
                         })
                     else:
-                        results.append({"row": idx+1, "status": f"❌ Lỗi: {res}", "url": None, "edit_code": None})
+                        results.append({
+                            "row": idx+1,
+                            "status": f"❌ Lỗi: {res}",
+                            "url": None,
+                            "edit_code": None
+                        })
+
                 except Exception as e:
                     results.append({"row": idx+1, "status": f"❌ Exception: {e}", "url": None, "edit_code": None})
+
+                # Giãn cách giữa các bài
+                if delay > 0 and idx < len(df) - 1:
+                    time.sleep(delay)
 
             result_df = pd.DataFrame(results)
             st.success("🎉 Hoàn tất đăng bài!")
